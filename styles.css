@@ -129,3 +129,8 @@ textarea { min-height: 70px; resize: vertical; }
   position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 20;
   background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 99px; font-size: 14px; max-width: 90vw; text-align: center;
 }
+.pill.e-porllegar { background: var(--gris-bg); color: var(--muted); }
+.pill.e-enmano { background: var(--warn-bg); color: var(--warn); }
+.pill.e-entregado, .pill.e-enviado { background: var(--soft); color: var(--accent); }
+.row .r .pill { margin-top: 3px; }
+.seg button { font-size: 14px; }

@@ -14,6 +14,9 @@ const D = n => '$ ' + f2(n);
 const fechaCorta = f => { if (!f) return ''; const [y, m, d] = f.split('-'); return `${+d} ${['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][m - 1]}`; };
 
 /* ---------- Datos ---------- */
+const ENTREGAS = { porllegar: 'Por llegar', enmano: 'Lo tengo', entregado: 'Entregado', enviado: 'Enviado' };
+const pillEntrega = it => `<span class="pill e-${it.entrega}">${ENTREGAS[it.entrega]}</span>`;
+const pendienteEntrega = it => it.entrega === 'porllegar' || it.entrega === 'enmano';
 const base = () => ({
   version: 1, updatedAt: null,
   settings: { tc: 3.5, tax: 7.75, socio: 'Joaquín', metodos: ['Yape', 'Plin', 'Efectivo', 'Transferencia', 'Zelle', 'Otro'] },
@@ -37,6 +40,7 @@ function normalizar(d) {
       precioUSD: num(i.precioUSD), tax: num(i.tax) || 0, comPct: num(i.comPct) || 0, comFija: num(i.comFija),
       tc: num(i.tc) || b.settings.tc, venta: num(i.venta), monedaVenta: mon(i.monedaVenta),
       por: i.por === 'socio' ? 'socio' : 'yo', devolver: num(i.devolver), personal: !!i.personal,
+      entrega: ENTREGAS[i.entrega] ? i.entrega : 'porllegar', envio: String(i.envio || ''), fechaEntrega: i.fechaEntrega || '',
       notas: String(i.notas || ''), pagos: (i.pagos || []).map(pago)
     })),
     devoluciones: (d.devoluciones || []).map(pago)
@@ -109,9 +113,9 @@ function totales() {
   return t;
 }
 function socio() {
-  const tc = db.settings.tc, r = { items: [], total: 0, vendido: 0, devuelto: 0 };
+  const tc = db.settings.tc, r = { items: [], total: 0, vendido: 0, pagado: 0, devuelto: 0 };
   for (const it of db.items) if (it.por === 'socio') {
-    const c = calc(it); r.items.push(it); r.total += c.devUSD; if (c.vendido) r.vendido += c.devUSD;
+    const c = calc(it); r.items.push(it); r.total += c.devUSD; if (c.vendido) r.vendido += c.devUSD; if (c.estado === 'pagado') r.pagado += c.devUSD;
   }
   r.devuelto = db.devoluciones.reduce((a, d) => a + (d.moneda === '$' ? d.monto : d.monto / tc), 0);
   r.debo = r.total - r.devuelto; r.deboVendido = r.vendido - r.devuelto; r.tc = tc;
@@ -127,10 +131,20 @@ function filaItem(it, conCliente = true) {
   const sub = [conCliente ? (it.personal ? 'Uso personal' : it.cliente || 'Sin cliente') : null, fechaCorta(it.fecha)].filter(Boolean).join(' · ');
   return `<button class="row" data-act="verItem" data-id="${it.id}">
     <span class="l"><span class="t">${esc(it.producto)}</span><br><span class="s">${esc(sub)}${it.por === 'socio' ? ` · <span class="pill socio">${esc(db.settings.socio)}</span>` : ''}</span></span>
-    <span class="r">${c.tieneVenta ? enMoneda(it, c, c.ventaS) : '<span class="s">' + D(it.por === 'socio' ? c.devUSD : c.costoUSD) + ' costo</span>'}<br><span class="pill ${c.estado}">${esc(etiqueta(it, c))}</span></span>
+    <span class="r">${c.tieneVenta ? enMoneda(it, c, c.ventaS) : '<span class="s">' + D(it.por === 'socio' ? c.devUSD : c.costoUSD) + ' costo</span>'}<br><span class="pill ${c.estado}">${esc(etiqueta(it, c))}</span> ${pillEntrega(it)}</span>
   </button>`;
 }
 
+function cardEntregas() {
+  const n = (por, ks) => db.items.filter(i => i.por === por && ks.includes(i.entrega)).length;
+  const fila = (tab, f, l, ks) => `<button class="row" data-act="irFiltro" data-tab="${tab}" data-f="${f}"><span class="l">${l}</span><span class="r"><b>${n(tab === 'socio' ? 'socio' : 'yo', ks)}</b> ›</span></button>`;
+  const so = db.items.some(i => i.por === 'socio'), nm = esc(db.settings.socio);
+  return `<div class="card"><h2>Entregas</h2>
+    ${fila('pedidos', 'porllegar', 'Míos por llegar', ['porllegar'])}
+    ${fila('pedidos', 'enmano', 'Míos que tengo, falta entregar', ['enmano'])}
+    ${fila('pedidos', 'entregados', 'Míos entregados o enviados', ['entregado', 'enviado'])}
+    ${so ? fila('socio', 'porllegar', `De ${nm} por llegar`, ['porllegar']) + fila('socio', 'enmano', `De ${nm} que tengo, falta entregar`, ['enmano']) + fila('socio', 'entregados', `De ${nm} entregados o enviados`, ['entregado', 'enviado']) : ''}</div>`;
+}
 function vResumen() {
   const t = totales(), cl = clientes().filter(c => c.saldoS > 0.005).sort((a, b) => b.saldoS - a.saldoS), so = socio();
   const met = Object.entries(t.metodos).sort((a, b) => b[1] - a[1]);
@@ -144,6 +158,7 @@ function vResumen() {
     <div class="stat"><div class="lbl">Costo</div><div class="val">${S(t.costo)}</div><div class="sub">producto + tax + comisión</div></div>
     <div class="stat"><div class="lbl">Ganancia</div><div class="val ${t.gan < 0 ? 'neg' : ''}">${S(t.gan)}</div><div class="sub">de lo vendido, si todos pagan</div></div>
   </div>
+  ${cardEntregas()}
   ${so.items.length || db.devoluciones.length ? `<div class="card"><h2>${esc(db.settings.socio)}</h2>
     <button class="row" data-act="tab" data-tab="socio"><span class="l"><span class="t">Le debo</span><br><span class="s">de ${D(so.total)} que puso · devuelto ${D(so.devuelto)}</span></span>
     <span class="r"><b>${D(so.debo)}</b><br><span class="s">≈ ${S(so.debo * so.tc)}</span></span></button></div>` : ''}
@@ -159,7 +174,7 @@ function vResumen() {
   </div>`;
 }
 
-const FILTROS = [['todos', 'Todos'], ['deben', 'Deben'], ['pagado', 'Pagados'], ['sinprecio', 'Sin precio'], ['stock', 'En venta'], ['personal', 'Personal']];
+const FILTROS = [['todos', 'Todos'], ['porllegar', 'Por llegar'], ['enmano', 'Por entregar'], ['entregados', 'Entregados'], ['deben', 'Deben'], ['pagado', 'Pagados'], ['sinprecio', 'Sin precio'], ['stock', 'En venta'], ['personal', 'Personal']];
 function vLista(por) {
   const q = clave(ui.q);
   const lista = db.items.filter(it => {
@@ -168,6 +183,8 @@ function vLista(por) {
     if (q && !clave(it.producto + ' ' + it.cliente).includes(q)) return false;
     switch (ui.filtro) {
       case 'deben': return e === 'debe' || e === 'parcial';
+      case 'porllegar': case 'enmano': return it.entrega === ui.filtro;
+      case 'entregados': return it.entrega === 'entregado' || it.entrega === 'enviado';
       case 'todos': return true;
       default: return e === ui.filtro;
     }
@@ -175,6 +192,7 @@ function vLista(por) {
   return `<input class="buscar" id="q" placeholder="Buscar producto o cliente" value="${esc(ui.q)}" autocomplete="off">
   <div class="chips">${FILTROS.map(([k, l]) => `<button class="chip ${ui.filtro === k ? 'on' : ''}" data-act="filtro" data-f="${k}">${esc(l)}</button>`).join('')}</div>
   <div class="cuenta">${lista.length} ${lista.length === 1 ? 'pedido' : 'pedidos'}</div>
+  ${ui.filtro === 'porllegar' && lista.length ? `<button class="btn full" style="margin-bottom:10px" data-act="llegaronTodos" data-por="${por}">Llegaron: marcar estos ${lista.length} como "Lo tengo"</button>` : ''}
   ${lista.length ? `<div class="list">${lista.map(i => filaItem(i)).join('')}</div>` : '<div class="card vacio">Nada por aquí.</div>'}`;
 }
 function vMios() {
@@ -229,9 +247,11 @@ function vSocio() {
   <div class="card">
     <div class="kv"><span>Puso en total</span><span>${D(so.total)}</span></div>
     <div class="kv"><span>De eso, ya vendido</span><span>${D(so.vendido)}</span></div>
+    <div class="kv"><span>Vendido y ya pagado por el cliente</span><span>${D(so.pagado)}</span></div>
     <div class="kv"><span>Aún sin vender</span><span>${D(so.total - so.vendido)}</span></div>
     <div class="kv"><span>Ya le devolví</span><span>${D(so.devuelto)}</span></div>
-    <div class="kv tot"><span>Le toca de lo ya vendido</span><span>${D(Math.max(0, so.deboVendido))}</span></div>
+    <div class="kv"><span>Le toca de lo ya vendido</span><span>${D(Math.max(0, so.deboVendido))}</span></div>
+    <div class="kv tot"><span>Ya cobrado, para devolverle</span><span class="pos">${D(Math.max(0, so.pagado - so.devuelto))}</span></div>
     <div class="acciones"><button class="btn" data-act="nuevoItem" data-por="socio">+ Compra de ${n}</button><button class="btn pri" data-act="nuevaDev">Registrar devolución</button></div>
   </div>
   ${so.items.length ? vLista('socio') : `<div class="card vacio">Aquí aparecen las cosas que compró ${n}.<br>Agrégalas con el botón de arriba.</div>`}
@@ -286,7 +306,12 @@ function dItem(id) {
   <div><span class="pill ${c.estado}">${esc(etiqueta(it, c))}</span> ${it.por === 'socio' ? `<span class="pill socio">Compró ${n}</span>` : ''}</div>
   <p class="nota">${esc([it.personal ? 'Uso personal' : it.cliente || 'Sin cliente', fechaCorta(it.fecha)].filter(Boolean).join(' · '))}</p>
   ${it.notas ? `<div class="aviso">${esc(it.notas)}</div>` : ''}
-  <div class="card" style="margin-top:10px">
+  <div class="card" style="margin-top:10px"><h2>Entrega</h2>
+    <div class="seg">${Object.entries(ENTREGAS).map(([k, l]) => `<button type="button" data-act="setEntrega" data-id="${it.id}" data-e="${k}" class="${it.entrega === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    ${it.entrega === 'enviado' ? `<label>¿Por dónde lo enviaste? (agencia, código…)</label><input id="e_envio" value="${esc(it.envio)}" placeholder="Ej. Shalom, Olva, código de envío" data-id="${it.id}">` : ''}
+    ${it.fechaEntrega && !pendienteEntrega(it) ? `<p class="nota">${ENTREGAS[it.entrega]} el ${fechaCorta(it.fechaEntrega)}</p>` : ''}
+  </div>
+  <div class="card">
     <div class="kv"><span>Precio producto</span><span>${D(it.precioUSD || 0)}</span></div>
     <div class="kv"><span>Con tax (${it.tax}%)</span><span>${D(c.conTax)}</span></div>
     <div class="kv"><span>Comisión${it.comFija == null ? ` (${it.comPct}%)` : ''}</span><span>${D(c.com)}</span></div>
@@ -336,7 +361,7 @@ function leerForm() {
     precioUSD: num(g('f_precio')), tax: num(g('f_tax')) || 0, comPct: num(g('f_com')) || 0, comFija: num(g('f_comf')),
     tc: num(g('f_tc')) || db.settings.tc, venta: num(g('f_venta')), monedaVenta: $('#f_mon').dataset.val,
     por: $('#f_por').dataset.val, devolver: $('#f_por').dataset.val === 'socio' ? num(g('f_dev')) : null,
-    personal: $('#f_personal').checked, notas: g('f_notas').trim(), pagos: prev ? prev.pagos : []
+    personal: $('#f_personal').checked, notas: g('f_notas').trim(), pagos: prev ? prev.pagos : [], entrega: prev ? prev.entrega : 'porllegar', envio: prev ? prev.envio : '', fechaEntrega: prev ? prev.fechaEntrega : ''
   };
 }
 function previa() {
@@ -476,7 +501,7 @@ async function sincronizar(alIniciar) {
 }
 
 /* ---------- Acciones ---------- */
-let tToast;
+let tToast, tEnvio;
 function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(tToast); tToast = setTimeout(() => (t.hidden = true), 2600); }
 
 const acts = {
@@ -500,6 +525,17 @@ const acts = {
   guardarPago(e) {
     const p = leerPago(); if (!p.monto || p.monto <= 0) return toast('Escribe el monto');
     item(e.dataset.id).pagos.push(p); guardar(); dItem(e.dataset.id); toast('Pago registrado');
+  },
+  setEntrega(e) {
+    const it = item(e.dataset.id); it.entrega = e.dataset.e;
+    it.fechaEntrega = pendienteEntrega(it) ? '' : hoy(); guardar(); dItem(it.id);
+    if (it.entrega === 'enviado') $('#e_envio').focus();
+  },
+  irFiltro(e) { ui.tab = e.dataset.tab || 'pedidos'; ui.cliente = null; ui.q = ''; ui.filtro = e.dataset.f; render(); scrollTo(0, 0); },
+  llegaronTodos(e) {
+    const q = clave(ui.q), l = db.items.filter(i => i.por === e.dataset.por && i.entrega === 'porllegar' && (!q || clave(i.producto + ' ' + i.cliente).includes(q)));
+    if (!confirm(`¿Marcar ${l.length} productos como "Lo tengo"?`)) return;
+    l.forEach(i => (i.entrega = 'enmano')); ui.filtro = 'enmano'; guardar(); toast(`${l.length} marcados`);
   },
   delPago(e) { if (!confirm('¿Borrar este pago?')) return; const it = item(e.dataset.id); it.pagos = it.pagos.filter(p => p.id !== e.dataset.p); guardar(); dItem(it.id); },
   pagoCliente(e) { dPagoCliente(e.dataset.c); },
@@ -577,7 +613,8 @@ document.addEventListener('input', e => {
   if (e.target.id === 'q') {
     ui.q = e.target.value; const pos = e.target.selectionStart; render();
     const q = $('#q'); q.focus(); q.setSelectionRange(pos, pos);
-  } else if (e.target.closest('#dlgBody') && /^f_/.test(e.target.id)) previa();
+  } else if (e.target.id === 'e_envio') { item(e.target.dataset.id).envio = e.target.value; clearTimeout(tEnvio); tEnvio = setTimeout(guardar, 600); }
+  else if (e.target.closest('#dlgBody') && /^f_/.test(e.target.id)) previa();
 });
 document.addEventListener('change', e => { if (e.target.id === 'f_personal') previa(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && sucio) { clearTimeout(tSubida); subir(); } });
