@@ -1,0 +1,4 @@
+datos*.json
+*copia*.json
+*.csv
+node_modules/
