@@ -1,5 +1,5 @@
 // Red primero (para recibir siempre la última versión); caché como respaldo sin conexión.
-const CACHE = 'pedidos-v1';
+const CACHE = 'pedidos-v2';
 const ARCHIVOS = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ARCHIVOS))); self.skipWaiting(); });
 self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));

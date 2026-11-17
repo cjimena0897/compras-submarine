@@ -127,14 +127,14 @@ function filaItem(it, conCliente = true) {
   const sub = [conCliente ? (it.personal ? 'Uso personal' : it.cliente || 'Sin cliente') : null, fechaCorta(it.fecha)].filter(Boolean).join(' · ');
   return `<button class="row" data-act="verItem" data-id="${it.id}">
     <span class="l"><span class="t">${esc(it.producto)}</span><br><span class="s">${esc(sub)}${it.por === 'socio' ? ` · <span class="pill socio">${esc(db.settings.socio)}</span>` : ''}</span></span>
-    <span class="r">${c.tieneVenta ? enMoneda(it, c, c.ventaS) : '<span class="s">' + D(c.costoUSD) + ' costo</span>'}<br><span class="pill ${c.estado}">${esc(etiqueta(it, c))}</span></span>
+    <span class="r">${c.tieneVenta ? enMoneda(it, c, c.ventaS) : '<span class="s">' + D(it.por === 'socio' ? c.devUSD : c.costoUSD) + ' costo</span>'}<br><span class="pill ${c.estado}">${esc(etiqueta(it, c))}</span></span>
   </button>`;
 }
 
 function vResumen() {
   const t = totales(), cl = clientes().filter(c => c.saldoS > 0.005).sort((a, b) => b.saldoS - a.saldoS), so = socio();
   const met = Object.entries(t.metodos).sort((a, b) => b[1] - a[1]);
-  if (!db.items.length) return `<div class="card vacio">Todavía no hay pedidos.<br><br>Toca <b>+</b> para agregar el primero, o ve a <b>Ajustes → Importar</b> para cargar los de tu Excel.</div>`;
+  if (!db.items.length) return cardCargar();
   return `
   <div class="card hero"><div class="lbl">Te falta cobrar</div><div class="big">${S(t.saldo)}</div>
     <div class="sub">${cl.length} ${cl.length === 1 ? 'persona te debe' : 'personas te deben'}</div></div>
@@ -159,23 +159,44 @@ function vResumen() {
   </div>`;
 }
 
-const FILTROS = [['todos', 'Todos'], ['deben', 'Deben'], ['pagado', 'Pagados'], ['sinprecio', 'Sin precio'], ['stock', 'En venta'], ['socio', null], ['personal', 'Personal']];
-function vPedidos() {
+const FILTROS = [['todos', 'Todos'], ['deben', 'Deben'], ['pagado', 'Pagados'], ['sinprecio', 'Sin precio'], ['stock', 'En venta'], ['personal', 'Personal']];
+function vLista(por) {
   const q = clave(ui.q);
   const lista = db.items.filter(it => {
+    if (it.por !== por) return false;
     const e = calc(it).estado;
     if (q && !clave(it.producto + ' ' + it.cliente).includes(q)) return false;
     switch (ui.filtro) {
       case 'deben': return e === 'debe' || e === 'parcial';
-      case 'socio': return it.por === 'socio';
       case 'todos': return true;
       default: return e === ui.filtro;
     }
   }).sort(porFecha);
   return `<input class="buscar" id="q" placeholder="Buscar producto o cliente" value="${esc(ui.q)}" autocomplete="off">
-  <div class="chips">${FILTROS.map(([k, l]) => `<button class="chip ${ui.filtro === k ? 'on' : ''}" data-act="filtro" data-f="${k}">${esc(l || db.settings.socio)}</button>`).join('')}</div>
+  <div class="chips">${FILTROS.map(([k, l]) => `<button class="chip ${ui.filtro === k ? 'on' : ''}" data-act="filtro" data-f="${k}">${esc(l)}</button>`).join('')}</div>
   <div class="cuenta">${lista.length} ${lista.length === 1 ? 'pedido' : 'pedidos'}</div>
   ${lista.length ? `<div class="list">${lista.map(i => filaItem(i)).join('')}</div>` : '<div class="card vacio">Nada por aquí.</div>'}`;
+}
+function vMios() {
+  if (!db.items.length) return cardCargar();
+  const t = { n: 0, venta: 0, cobrado: 0, saldo: 0, costo: 0 };
+  for (const it of db.items) if (it.por === 'yo' && !it.personal) {
+    const c = calc(it); t.n++; t.costo += c.costoS; t.cobrado += c.pagadoS;
+    if (c.vendido) { t.venta += c.ventaS; t.saldo += c.saldoS; }
+  }
+  return `<div class="grid">
+    <div class="stat"><div class="lbl">Vendido</div><div class="val">${S(t.venta)}</div></div>
+    <div class="stat"><div class="lbl">Te falta cobrar</div><div class="val ${t.saldo > 0.005 ? 'neg' : ''}">${S(t.saldo)}</div></div>
+    <div class="stat"><div class="lbl">Ya cobrado</div><div class="val">${S(t.cobrado)}</div></div>
+    <div class="stat"><div class="lbl">Costo</div><div class="val">${S(t.costo)}</div></div>
+  </div>` + vLista('yo');
+}
+function cardCargar() {
+  return `<div class="card"><h2>Cargar mis pedidos</h2>
+    <p class="nota" style="margin-top:0">Escribe tu clave para traer tus pedidos del Excel y de Amazon a este teléfono. Solo hay que hacerlo una vez.</p>
+    <input type="password" id="clave" autocomplete="off" autocapitalize="off" placeholder="Clave">
+    <div class="acciones"><button class="btn pri" data-act="cargarCifrado">Cargar</button></div>
+    <p class="nota">¿Prefieres empezar en blanco? Toca <b>+</b> para agregar un pedido.</p></div>`;
 }
 
 function vClientes() {
@@ -213,10 +234,7 @@ function vSocio() {
     <div class="kv tot"><span>Le toca de lo ya vendido</span><span>${D(Math.max(0, so.deboVendido))}</span></div>
     <div class="acciones"><button class="btn" data-act="nuevoItem" data-por="socio">+ Compra de ${n}</button><button class="btn pri" data-act="nuevaDev">Registrar devolución</button></div>
   </div>
-  ${so.items.length ? `<div class="list">${so.items.slice().sort(porFecha).map(it => { const c = calc(it); return `
-    <button class="row" data-act="verItem" data-id="${it.id}"><span class="l"><span class="t">${esc(it.producto)}</span><br><span class="s">${esc([it.cliente || 'Sin cliente', fechaCorta(it.fecha)].filter(Boolean).join(' · '))}</span></span>
-    <span class="r">${D(c.devUSD)}<br><span class="pill ${c.vendido ? 'pagado' : 'stock'}">${c.vendido ? 'Vendido' : 'Sin vender'}</span></span></button>`; }).join('')}</div>`
-      : `<div class="card vacio">Aquí aparecen las cosas que compró ${n}.<br>Agrégalas con el botón de arriba.</div>`}
+  ${so.items.length ? vLista('socio') : `<div class="card vacio">Aquí aparecen las cosas que compró ${n}.<br>Agrégalas con el botón de arriba.</div>`}
   ${db.devoluciones.length ? `<div class="card"><h2>Devoluciones</h2>${db.devoluciones.slice().sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '')).map(d => `
     <div class="row"><span class="l"><span class="t">${esc(d.metodo || 'Sin registrar')}</span><br><span class="s">${esc([fechaCorta(d.fecha), d.nota].filter(Boolean).join(' · '))}</span></span>
     <span class="r">${d.moneda === '$' ? D(d.monto) : S(d.monto)}<button class="del" data-act="delDev" data-id="${d.id}" aria-label="Borrar">✕</button></span></div>`).join('')}</div>` : ''}`;
@@ -242,9 +260,9 @@ function vAjustes() {
 }
 
 function render() {
-  const v = { resumen: vResumen, pedidos: vPedidos, clientes: vClientes, socio: vSocio, ajustes: vAjustes }[ui.tab];
+  const v = { resumen: vResumen, pedidos: vMios, clientes: vClientes, socio: vSocio, ajustes: vAjustes }[ui.tab];
   $('#vista').innerHTML = v();
-  $('#titulo').textContent = { resumen: 'Mis Pedidos', pedidos: 'Pedidos', clientes: 'Clientes', socio: db.settings.socio, ajustes: 'Ajustes' }[ui.tab];
+  $('#titulo').textContent = { resumen: 'Mis Pedidos', pedidos: 'Mis pedidos', clientes: 'Clientes', socio: db.settings.socio, ajustes: 'Ajustes' }[ui.tab];
   $('#tabSocio').textContent = db.settings.socio;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
   $('#fab').hidden = ui.tab === 'ajustes';
@@ -462,7 +480,7 @@ let tToast;
 function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(tToast); tToast = setTimeout(() => (t.hidden = true), 2600); }
 
 const acts = {
-  tab(e) { ui.tab = e.dataset.tab; ui.cliente = null; render(); scrollTo(0, 0); },
+  tab(e) { if (ui.tab !== e.dataset.tab) { ui.q = ''; ui.filtro = 'todos'; } ui.tab = e.dataset.tab; ui.cliente = null; render(); scrollTo(0, 0); },
   filtro(e) { ui.filtro = e.dataset.f; render(); },
   verCliente(e) { ui.tab = 'clientes'; ui.cliente = e.dataset.c || null; render(); scrollTo(0, 0); },
   verItem(e) { dItem(e.dataset.id); },
@@ -503,6 +521,19 @@ const acts = {
   exportar() { entregar(`pedidos-copia-${hoy()}.json`, JSON.stringify(db, null, 1), 'application/json'); },
   exportarCSV() { entregar(`pedidos-${hoy()}.csv`, csv(), 'text/csv'); },
   importar: dImportar,
+  async cargarCifrado() {
+    const clave = $('#clave').value.trim(); if (!clave) return toast('Escribe la clave');
+    try {
+      const r = await fetch('datos.cifrado.json', { cache: 'no-store' }); if (!r.ok) throw new Error('red');
+      const f = await r.json(), bin = x => Uint8Array.from(atob(x), c => c.charCodeAt(0));
+      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(clave), 'PBKDF2', false, ['deriveKey']);
+      const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: bin(f.salt), iterations: f.iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+      let txt;
+      try { txt = new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bin(f.iv) }, key, bin(f.data))); }
+      catch (e) { return toast('Clave incorrecta'); }
+      db = normalizar(JSON.parse(txt)); ui.tab = 'resumen'; guardar(); toast(`${db.items.length} pedidos cargados`);
+    } catch (e) { toast('No se pudo cargar. Revisa tu conexión.'); }
+  },
   async hacerImportar() {
     try {
       const f = $('#i_file').files[0], txt = f ? await f.text() : $('#i_txt').value;
